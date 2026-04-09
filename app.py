@@ -3,249 +3,220 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objs as go
 
-# ML Models
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.svm import SVR
-
-# Boosting
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 
-# DL Models
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, GRU, Dense, Dropout
-
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error
-from datetime import date
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-# =========================
-# TITLE
-# =========================
-st.title("📊 Stock Prediction: ML & DL Models")
+st.set_page_config(layout="wide")
+st.title("📊 Stock Analytics Dashboard")
 
-# =========================
-# SIDEBAR
-# =========================
+
 st.sidebar.header("📁 Upload Dataset")
-uploaded_file = st.sidebar.file_uploader(
-    "Upload Excel / CSV",
-    type=["xlsx", "csv"]
-)
+uploaded_file = st.sidebar.file_uploader("Upload CSV / Excel", type=["csv", "xlsx"])
 
-st.sidebar.header("🤖 Pilih Model")
 
-model_type = st.sidebar.selectbox(
-    "Kategori Model",
-    ["Machine Learning", "Deep Learning"]
-)
+def generate_default_data():
+    dates = pd.date_range(start="2022-01-01", end="2024-12-31")
+    np.random.seed(42)
+    n = len(dates)
 
-if model_type == "Machine Learning":
-    model_choice = st.sidebar.selectbox(
-        "Pilih Model ML",
-        ["Linear Regression", "Random Forest", "Gradient Boosting", "XGBoost", "SVR", "LightGBM"]
-    )
+    trend = np.linspace(4000, 9000, n)
+    noise = np.random.normal(0, 80, n)
+
+    df = pd.DataFrame({
+        "Date": dates,
+        "Close": trend + noise,
+        "Volume": np.random.randint(1_000_000, 7_000_000, n),
+        "PER": np.random.uniform(8, 30, n),
+        "PBV": np.random.uniform(0.8, 6, n),
+        "ROA": np.random.uniform(0.5, 6, n),
+        "ROE": np.random.uniform(8, 30, n),
+        "EPS": np.random.uniform(30, 400, n)
+    })
+
+    return df
+
+
+if uploaded_file:
+    data = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+    st.sidebar.success("Upload berhasil")
 else:
-    model_choice = st.sidebar.selectbox(
-        "Pilih Model DL",
-        ["LSTM", "GRU"]
-    )
+    data = generate_default_data()
+    st.sidebar.info("Menggunakan dataset default")
 
-n_days = st.sidebar.slider("Hari Prediksi", 30, 365)
+data['Date'] = pd.to_datetime(data['Date'])
+data = data.sort_values('Date')
 
-# =========================
-# LOAD DATA
-# =========================
-if uploaded_file is None:
-    st.warning("Silakan upload dataset terlebih dahulu!")
+
+numeric_cols = data.select_dtypes(include=np.number).columns.tolist()
+
+st.sidebar.header("📊 Feature Selection")
+
+selected_features = st.sidebar.multiselect(
+    "Pilih fitur",
+    numeric_cols,
+    default=["Close"] if "Close" in numeric_cols else numeric_cols[:1]
+)
+
+if "Close" not in selected_features:
+    st.error("Close wajib dipilih")
     st.stop()
 
-try:
-    if uploaded_file.name.endswith('.csv'):
-        data = pd.read_csv(uploaded_file)
-    else:
-        data = pd.read_excel(uploaded_file)
 
-    if 'Date' not in data.columns or 'Close' not in data.columns:
-        st.error("Dataset harus memiliki kolom: Date dan Close")
-        st.stop()
+st.sidebar.header("🤖 Model Selection")
 
-    data['Date'] = pd.to_datetime(data['Date'])
-    data = data.sort_values('Date')
+model_option = st.sidebar.selectbox(
+    "Pilih Model",
+    ["All Models (Benchmark)",
+     "Linear Regression",
+     "Random Forest",
+     "Gradient Boosting",
+     "XGBoost",
+     "SVR",
+     "LightGBM"]
+)
 
-    st.success("Dataset berhasil diupload!")
 
-except Exception as e:
-    st.error(f"Error: {e}")
-    st.stop()
+st.sidebar.header("🔗 Korelasi Fitur")
 
-# =========================
-# PREVIEW
-# =========================
-st.subheader("Preview Data")
-st.write(data.head())
+col1, col2 = st.sidebar.columns(2)
 
-# =========================
-# VISUALISASI
-# =========================
-st.subheader("Grafik Harga")
-st.line_chart(data.set_index('Date')['Close'])
+feat1 = col1.selectbox("Fitur 1", numeric_cols)
+feat2 = col2.selectbox("Fitur 2", numeric_cols, index=1)
 
-# =========================
-# PREPROCESSING
-# =========================
-df = data[['Close']].copy()
+
+st.subheader("📊 KPI")
+
+latest = data['Close'].iloc[-1]
+returns = data['Close'].pct_change().mean()*100
+vol = data['Close'].pct_change().std()*100
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Price", f"{latest:.2f}")
+c2.metric("Return %", f"{returns:.2f}")
+c3.metric("Volatility %", f"{vol:.2f}")
+
+
+tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Model", "Forecast", "Insight"])
+
+
+with tab1:
+    st.line_chart(data.set_index("Date")["Close"])
+
+    st.subheader("🔗 Korelasi Fitur")
+    corr = data[feat1].corr(data[feat2])
+    st.write(f"Korelasi {feat1} vs {feat2}: {corr:.4f}")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=data[feat1],
+        y=data[feat2],
+        mode='markers'
+    ))
+    st.plotly_chart(fig)
+
+
+df = data[selected_features]
 
 scaler = MinMaxScaler()
-scaled_data = scaler.fit_transform(df)
+scaled = scaler.fit_transform(df)
 
-# =========================
-# CREATE DATASET
-# =========================
 def create_dataset(data, time_step=10):
     X, y = [], []
-    for i in range(len(data) - time_step - 1):
-        X.append(data[i:(i + time_step), 0])
-        y.append(data[i + time_step, 0])
+    for i in range(len(data)-time_step-1):
+        X.append(data[i:(i+time_step)])
+        y.append(data[i+time_step, 0])
     return np.array(X), np.array(y)
 
-time_step = 10
-X, y = create_dataset(scaled_data, time_step)
+X, y = create_dataset(scaled)
+split = int(len(X)*0.8)
 
-# =========================
-# SPLIT DATA
-# =========================
-split = int(len(X) * 0.8)
 X_train, X_test = X[:split], X[split:]
 y_train, y_test = y[:split], y[split:]
 
-# =========================
-# MACHINE LEARNING
-# =========================
-if model_type == "Machine Learning":
+X_train = X_train.reshape(X_train.shape[0], -1)
+X_test = X_test.reshape(X_test.shape[0], -1)
 
-    X_train_ml = X_train.reshape(X_train.shape[0], -1)
-    X_test_ml = X_test.reshape(X_test.shape[0], -1)
 
-    if model_choice == "Linear Regression":
-        model = LinearRegression()
+# MODELS
 
-    elif model_choice == "Random Forest":
-        model = RandomForestRegressor()
+models = {
+    "Linear Regression": LinearRegression(),
+    "Random Forest": RandomForestRegressor(),
+    "Gradient Boosting": GradientBoostingRegressor(),
+    "XGBoost": XGBRegressor(),
+    "SVR": SVR(),
+    "LightGBM": LGBMRegressor()
+}
 
-    elif model_choice == "Gradient Boosting":
-        model = GradientBoostingRegressor()
 
-    elif model_choice == "XGBoost":
-        model = XGBRegressor()
+with tab2:
+    results = []
 
-    elif model_choice == "SVR":
-        model = SVR()
+    if model_option == "All Models (Benchmark)":
 
-    elif model_choice == "LightGBM":
-        model = LGBMRegressor()
+        for name, model in models.items():
+            model.fit(X_train, y_train)
+            pred = model.predict(X_test)
 
-    # TRAIN
-    model.fit(X_train_ml, y_train)
+            rmse = np.sqrt(mean_squared_error(y_test, pred))
+            mae = mean_absolute_error(y_test, pred)
+            mape = np.mean(np.abs((y_test - pred)/y_test))*100
 
-    # PREDICT
-    y_pred = model.predict(X_test_ml)
+            results.append([name, rmse, mae, mape, model])
 
-# =========================
-# DEEP LEARNING
-# =========================
-else:
+        df_results = pd.DataFrame(results, columns=["Model","RMSE","MAE","MAPE","Obj"])
+        df_results = df_results.sort_values("RMSE")
 
-    X_train_dl = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
-    X_test_dl = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+        st.dataframe(df_results[["Model","RMSE","MAE","MAPE"]])
 
-    model = Sequential()
+        best = df_results.iloc[0]
+        best_model = best["Obj"]
 
-    if model_choice == "LSTM":
-        model.add(LSTM(50, return_sequences=True, input_shape=(time_step, 1)))
-        model.add(Dropout(0.2))
-        model.add(LSTM(50))
+        st.success(f"Best Model: {best['Model']}")
+
+        st.info(f"""
+Model {best['Model']} dipilih karena memiliki error terendah.
+RMSE: {best['RMSE']:.4f}
+MAE: {best['MAE']:.4f}
+MAPE: {best['MAPE']:.2f}%
+""")
 
     else:
-        model.add(GRU(50, return_sequences=True, input_shape=(time_step, 1)))
-        model.add(Dropout(0.2))
-        model.add(GRU(50))
+        model = models[model_option]
+        model.fit(X_train, y_train)
+        pred = model.predict(X_test)
 
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mse')
+        rmse = np.sqrt(mean_squared_error(y_test, pred))
+        st.write(f"RMSE: {rmse:.4f}")
 
-    model.fit(X_train_dl, y_train, epochs=10, batch_size=32, verbose=1)
+        best_model = model
 
-    y_pred = model.predict(X_test_dl)
+with tab3:
+    def forecast(model, data, n_days=90):
+        temp = list(data[-10:].flatten())
+        out = []
 
-# =========================
-# EVALUASI
-# =========================
-mse = mean_squared_error(y_test, y_pred)
-st.subheader("Evaluasi Model")
-st.write(f"MSE: {mse:.6f}")
+        for _ in range(n_days):
+            x = np.array(temp[-len(selected_features)*10:]).reshape(1, -1)
+            yhat = model.predict(x)
+            temp.append(yhat[0])
+            out.append(yhat[0])
 
-# =========================
-# INVERSE SCALE
-# =========================
-y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
-y_pred_inv = scaler.inverse_transform(y_pred.reshape(-1, 1))
+        return scaler.inverse_transform(np.array(out).reshape(-1,1))
 
-# =========================
-# PLOT HASIL
-# =========================
-st.subheader("Perbandingan Aktual vs Prediksi")
+    future = forecast(best_model, scaled)
 
-fig = go.Figure()
-fig.add_trace(go.Scatter(y=y_test_inv.flatten(), name="Actual"))
-fig.add_trace(go.Scatter(y=y_pred_inv.flatten(), name="Predicted"))
+    st.line_chart(future)
 
-st.plotly_chart(fig)
 
-# =========================
-# FUTURE PREDICTION
-# =========================
-def predict_future(model, data, n_days):
-    temp_input = list(data[-time_step:].flatten())
-    output = []
-
-    for _ in range(n_days):
-        x_input = np.array(temp_input[-time_step:]).reshape(1, -1)
-
-        if model_type == "Deep Learning":
-            x_input = x_input.reshape(1, time_step, 1)
-
-        yhat = model.predict(x_input)
-        temp_input.append(yhat[0])
-        output.append(yhat[0])
-
-    return scaler.inverse_transform(np.array(output).reshape(-1, 1))
-
-future = predict_future(model, scaled_data, n_days)
-
-# =========================
-# PLOT FUTURE
-# =========================
-st.subheader("Prediksi Masa Depan")
-
-fig2 = go.Figure()
-fig2.add_trace(go.Scatter(y=df['Close'], name="History"))
-fig2.add_trace(go.Scatter(
-    x=list(range(len(df), len(df) + n_days)),
-    y=future.flatten(),
-    name="Future"
-))
-
-st.plotly_chart(fig2)
-
-# =========================
-# DOWNLOAD
-# =========================
-future_df = pd.DataFrame({"Prediksi": future.flatten()})
-
-st.download_button(
-    "Download Hasil Prediksi",
-    future_df.to_csv(index=False),
-    "prediksi.csv"
-)
+with tab4:
+    if hasattr(best_model, "feature_importances_"):
+        st.bar_chart(best_model.feature_importances_)
+    else:
+        st.info("Model tidak mendukung feature importance")
